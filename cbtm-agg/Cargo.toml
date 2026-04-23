@@ -1,0 +1,11 @@
+[package]
+name = "cbtm-agg"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+actix-web = "4"
+dotenvy = "0.15.7"
+sqlx = { version = "0.8", features = [ "runtime-tokio", "tls-native-tls", "postgres"]}
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
+serde = {version = "1.0", features = ["derive"] }

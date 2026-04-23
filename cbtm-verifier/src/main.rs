@@ -1,6 +1,6 @@
 use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
 use dotenvy::dotenv;
-use serde::Deserialize;
+use serde::{Serialize, Deserialize};
 use sqlx::postgres::PgPoolOptions;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Mutex, OnceLock};
@@ -8,6 +8,7 @@ use std::env;
 use std::time::Duration;
 mod db;
 mod packet;
+mod jwt;
 
 #[derive(Deserialize)]
 struct EchoRequest {
@@ -18,6 +19,13 @@ struct QueueItem {
     ping: packet::UserPing,
     timestamp: i64,
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+struct AggregateCountMessage {
+    token: String,
+    counts: HashMap<i32, i32>,
+}
+
 static CYCLE_TIME_SECONDS: OnceLock<i64> = OnceLock::new();
 fn recent_ping_window_seconds() -> i64 {
     *CYCLE_TIME_SECONDS.get_or_init(|| {
@@ -25,6 +33,14 @@ fn recent_ping_window_seconds() -> i64 {
             .ok()
             .and_then(|s| s.parse::<i64>().ok())
             .unwrap_or(180)
+    })
+}
+
+static JWT_SECRET_KEY: OnceLock<String> = OnceLock::new();
+fn jwt_secret_key() -> &'static str {
+    JWT_SECRET_KEY.get_or_init(|| {
+        env::var("JWT_SECRET_KEY")
+            .unwrap_or_else(|_| "defaultsecretkey".to_string())
     })
 }
 
@@ -98,7 +114,8 @@ async fn flush_aggregate_counts(agg_poi_count: web::Data<Mutex<HashMap<i32, i32>
     let client = reqwest::Client::new();
 
     loop {
-        let sleep_seconds = recent_ping_window_seconds().max(1) as u64;
+        //let sleep_seconds = recent_ping_window_seconds().max(1) as u64;
+        let sleep_seconds = 4; // For debug
         actix_web::rt::time::sleep(Duration::from_secs(sleep_seconds)).await;
         println!("Flushing aggregated POI counts to endpoint...");
 
@@ -115,10 +132,32 @@ async fn flush_aggregate_counts(agg_poi_count: web::Data<Mutex<HashMap<i32, i32>
             }
         };
 
-        if let Some(payload) = snapshot {
-            match client.post(&endpoint).json(&payload).send().await {
-                Ok(_) => println!("Flushed POI counts to dummy endpoint"),
-                Err(e) => print!("Failed to flush POI counts: {}", e),
+        // Once we have a snapshot of the current counts, we can release and request a JWT token
+        let token = match jwt::create_jwt_token() {
+            Ok(t) => t,
+            Err(e) => {
+                print!("Failed to create JWT token: {}", e);
+                continue;
+            }
+        };
+
+        println!("Generated JWT token for aggregate count flush: {}", token);
+
+        let payload = AggregateCountMessage {
+            token,
+            counts: snapshot.clone().unwrap_or_default(),
+        };
+
+        // Post the aggregate counts to the endpoint
+        match client.post(&endpoint).json(&payload).send().await {
+            Ok(resp) => {
+                if resp.status().is_success() {
+                    println!("Successfully flushed aggregate counts: {:?}", snapshot);
+                } else {                    print!("Failed to flush aggregate counts. Server responded with status: {}", resp.status());
+                }
+            }
+            Err(e) => {
+                print!("Failed to flush aggregate counts: {}", e);
             }
         }
     }

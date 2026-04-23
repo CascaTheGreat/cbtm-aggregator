@@ -8,10 +8,8 @@ use chrono::{DateTime, Utc};
 #[derive(Debug)]
 pub struct POI {
     pub id: i32,
-    pub name: String,
-    pub location: Point<f64>,
     pub bounds: Polygon<f64>,
-    pub updated: DateTime<Utc>,
+    pub location: Point<f64>,
 }
 
 impl From<&PgRow> for POI {
@@ -29,10 +27,8 @@ impl From<&PgRow> for POI {
 
         Self {
             id: row.get("id"),
-            name: row.get("name"),
-            location: parsed_location,
             bounds: parsed_bounds,
-            updated: row.get("updated"),
+            location: parsed_location,
         }
     }
 }
@@ -40,7 +36,7 @@ impl From<&PgRow> for POI {
 pub async fn get_pois(connection: &sqlx::PgPool) -> Result<Vec<POI>, sqlx::Error> {
     // When we pass a connection pool fetch_all or execute auto pull from the pool
     let rows = sqlx::query(
-        "SELECT id, name, gis.st_asbinary(location) AS location, gis.st_asbinary(bounds) AS bounds, updated FROM pois"
+        "SELECT id, gis.st_asbinary(location) AS location, gis.st_asbinary(bounds) AS bounds FROM pois"
     )
     // we map each row to a POI struct using the From trait we implemented, then return the vector of POIs
     .fetch_all(connection)
